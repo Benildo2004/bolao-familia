@@ -1,102 +1,131 @@
 import streamlit as st
 import pandas as pd
 import requests
-import json
-import os
+from datetime import datetime
 
-# --- FILE TO SAVE DATA ---
-DATA_FILE = "participantes.json"
+# --- CONFIGURAÇÃO MANUAL (Altere aqui para cada nova rodada) ---
+DATA_INICIO_BOLAO = datetime(2026, 7, 26)
+SENHA_ADMIN = "familia123"  # Altere sua senha aqui
 
+# --- CONFIGURAÇÃO DE PREÇOS ---
+VALOR_COTA = 50.0
+PERC_GANHADOR = 0.60
+PERC_LANTERNA = 0.25
 
-def carregar_dados():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return []
-
-
-def salvar_dados(dados):
-    with open(DATA_FILE, "w") as f:
-        json.dump(dados, f, indent=4)
-
-
-# --- CONFIG ---
-st.set_page_config(page_title="Bolão Familiar", layout="wide")
-
-# Initialize data
-if 'participantes' not in st.session_state:
-    st.session_state.participantes = carregar_dados()
-
-# --- API MEGA SENA ---
+# --- FUNÇÃO DE BUSCA NA API ---
 
 
 @st.cache_data(ttl=3600)
 def buscar_resultados():
     try:
         url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
-        return requests.get(url).json()
+        res = requests.get(url).json()
+
+        sorteados = set()
+        detalhes = []
+        for s in res:
+            data_s = datetime.strptime(s['data'], "%d/%m/%Y")
+            if data_s >= DATA_INICIO_BOLAO:
+                dezenas = [int(n) for n in s['dezenas']]
+                sorteados.update(dezenas)
+                detalhes.append(
+                    f"Concurso {s['concurso']} ({s['data']}): {s['dezenas']}")
+        return sorteados, detalhes
     except:
-        return []
+        return set(), []
 
 
-resultados = buscar_resultados()
-todos_sorteados = set()
-for r in resultados:
-    todos_sorteados.update([int(n) for n in r['dezenas']])
+# --- INICIALIZAÇÃO ---
+st.set_page_config(page_title="Bolão Família", layout="wide")
+if 'participantes' not in st.session_state:
+    st.session_state.participantes = []
+
+sorteados, lista_concursos = buscar_resultados()
 
 # --- SIDEBAR ---
-menu = st.sidebar.selectbox(
-    "Navegação", ["Ranking", "Cadastrar", "Financeiro"])
+st.sidebar.title("🎲 Menu")
+aba = st.sidebar.radio(
+    "Navegar:", ["📊 Ranking", "💰 Financeiro", "📅 Concursos", "⚙️ Organizador"])
 
-if menu == "Cadastrar":
-    st.header("📝 Inscrição de Familiar")
-    nome = st.text_input("Nome")
-    nums = st.text_input("10 números (separados por vírgula)")
+# --- ABA: RANKING ---
+if aba == "📊 Ranking":
+    st.header(f"🏆 Classificação Atual")
+    st.caption(
+        f"Contando sorteios desde: {DATA_INICIO_BOLAO.strftime('%d/%m/%Y')}")
 
-    if st.button("Salvar Jogo"):
-        try:
-            lista = [int(n.strip()) for n in nums.split(",")]
-            if len(lista) == 10:
-                novo = {"nome": nome, "numeros": lista}
-                st.session_state.participantes.append(novo)
-                salvar_dados(st.session_state.participantes)
-                st.success("Salvo com sucesso!")
-            else:
-                st.error("Escolha 10 números.")
-        except:
-            st.error("Erro no formato.")
-
-elif menu == "Ranking":
-    st.header("🏆 Classificação Atual")
     if not st.session_state.participantes:
-        st.write("Ninguém cadastrado.")
+        st.info("Aguardando cadastro de participantes pelo Organizador.")
     else:
-        tabela = []
+        dados = []
         for p in st.session_state.participantes:
-            acertos = [n for n in p['numeros'] if n in todos_sorteados]
-            tabela.append({
+            acertos = [n for n in p['numeros'] if n in sorteados]
+            dados.append({
                 "Nome": p['nome'],
                 "Acertos": len(acertos),
-                "Números": p['numeros'],
-                "Já Sorteados": acertos
+                "Faltam": 10 - len(acertos),
+                "Números Escolhidos": sorted(p['numeros']),
+                "Números Sorteados": sorted(acertos)
             })
 
-        df = pd.DataFrame(tabela).sort_values(by="Acertos", ascending=False)
-        st.dataframe(df, use_container_width=True)
+        df = pd.DataFrame(dados).sort_values(by="Acertos", ascending=False)
+        st.table(df)  # Table é melhor para ver no celular
 
-        # Check for winner
+        # Lógica de Vitória
         vencedores = df[df["Acertos"] >= 10]
         if not vencedores.empty:
             st.balloons()
-            st.success(f"TEMOS UM GANHADOR: {vencedores['Nome'].tolist()}")
+            st.success(
+                f"🏁 RODADA ENCERRADA! Ganhador(es): {', '.join(vencedores['Nome'].tolist())}")
+            min_p = df["Acertos"].min()
+            lanternas = df[df["Acertos"] == min_p]["Nome"].tolist()
+            st.warning(
+                f"🐢 Lanterna(s) (25% do prêmio): {', '.join(lanternas)} com {min_p} acertos.")
 
-            min_pts = df["Acertos"].min()
-            lanternas = df[df["Acertos"] == min_pts]["Nome"].tolist()
-            st.warning(f"Lanterna(s) (25%): {lanternas} com {min_pts} pontos")
+# --- ABA: FINANCEIRO ---
+elif aba == "💰 Financeiro":
+    st.header("💰 Resumo Financeiro")
+    total_p = len(st.session_state.participantes)
+    arrecadado = total_p * VALOR_COTA
+    st.metric("Total de Participantes", total_p)
+    col1, col2 = st.columns(2)
+    col1.metric("Prêmio 1º Lugar (60%)",
+                f"R$ {arrecadado * PERC_GANHADOR:.2f}")
+    col2.metric("Prêmio Lanterna (25%)",
+                f"R$ {arrecadado * PERC_LANTERNA:.2f}")
 
-elif menu == "Financeiro":
-    qtd = len(st.session_state.participantes)
-    total = qtd * 50
-    st.metric("Total Arrecadado", f"R$ {total:.2f}")
-    st.write(f"Vencedor (60%): R$ {total*0.6:.2f}")
-    st.write(f"Lanterna (25%): R$ {total*0.25:.2f}")
+# --- ABA: CONCURSOS ---
+elif aba == "📅 Concursos":
+    st.header("Sorteios Válidos")
+    for c in lista_concursos:
+        st.write(c)
+
+# --- ABA: ORGANIZADOR (SENHA) ---
+elif aba == "⚙️ Organizador":
+    st.header("Área Restrita")
+    senha = st.text_input("Digite a senha para gerenciar", type="password")
+
+    if senha == SENHA_ADMIN:
+        st.success("Acesso Liberado")
+
+        st.subheader("Subir Excel (.xlsx)")
+        st.caption(
+            "A planilha deve ter as colunas 'Nome' e 'Numeros' (separados por vírgula)")
+        arq = st.file_uploader("Arquivo Excel", type="xlsx")
+        if arq:
+            if st.button("Processar Excel"):
+                df_ex = pd.read_excel(arq)
+                for _, row in df_ex.iterrows():
+                    try:
+                        n = str(row['Nome'])
+                        nums = [int(i) for i in str(row['Numeros']).split(',')]
+                        st.session_state.participantes.append(
+                            {"nome": n, "numeros": nums})
+                    except:
+                        continue
+                st.rerun()
+
+        if st.button("❌ LIMPAR TODOS OS DADOS (Nova Rodada)"):
+            st.session_state.participantes = []
+            st.rerun()
+    elif senha != "":
+        st.error("Senha Incorreta")
