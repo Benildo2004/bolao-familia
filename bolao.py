@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
+import os
 
 # --- CONFIGURAÇÃO MANUAL (Altere aqui para cada nova rodada) ---
 DATA_INICIO_BOLAO = datetime(2026, 7, 26)
@@ -19,7 +20,8 @@ PERC_LANTERNA = 0.25
 def buscar_resultados():
     try:
         url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
-        res = requests.get(url).json()
+        # timeout adicionado para não travar o app se a Caixa estiver lenta
+        res = requests.get(url, timeout=10).json()
 
         sorteados = set()
         detalhes = []
@@ -30,22 +32,51 @@ def buscar_resultados():
                 sorteados.update(dezenas)
                 detalhes.append(
                     f"Concurso {s['concurso']} ({s['data']}): {s['dezenas']}")
-        return sorteados, detalhes
-    except:
-        return set(), []
+        return sorteados, detalhes, False  # False indica que NÃO houve erro
+    except Exception:
+        return set(), [], True  # True indica que houve erro na conexão
+
+# --- FUNÇÃO PARA CARREGAR EXCEL AUTOMATICAMENTE ---
+
+
+def carregar_planilha_local():
+    lista_temp = []
+    # Verifica se o arquivo existe no repositório do GitHub
+    if os.path.exists("bolao_atual.xlsx"):
+        try:
+            df_ex = pd.read_excel("bolao_atual.xlsx")
+            for _, row in df_ex.iterrows():
+                try:
+                    n = str(row['Nome'])
+                    # O .strip() limpa espaços antes e depois do número
+                    nums = [int(i.strip())
+                            for i in str(row['Numeros']).split(',')]
+                    lista_temp.append({"nome": n, "numeros": nums})
+                except:
+                    continue
+        except Exception:
+            pass
+    return lista_temp
 
 
 # --- INICIALIZAÇÃO ---
 st.set_page_config(page_title="Bolão Família", layout="wide")
-if 'participantes' not in st.session_state:
-    st.session_state.participantes = []
 
-sorteados, lista_concursos = buscar_resultados()
+# Carrega os dados automaticamente se a lista de participantes estiver vazia
+if 'participantes' not in st.session_state or not st.session_state.participantes:
+    st.session_state.participantes = carregar_planilha_local()
+
+sorteados, lista_concursos, erro_api = buscar_resultados()
 
 # --- SIDEBAR ---
 st.sidebar.title("🎲 Menu")
 aba = st.sidebar.radio(
     "Navegar:", ["📊 Ranking", "💰 Financeiro", "📅 Concursos", "⚙️ Organizador"])
+
+# Aviso visual na barra lateral caso a API falhe
+if erro_api:
+    st.sidebar.error(
+        "⚠️ Erro de conexão com a loteria. Resultados podem estar desatualizados.")
 
 # --- ABA: RANKING ---
 if aba == "📊 Ranking":
@@ -54,7 +85,8 @@ if aba == "📊 Ranking":
         f"Contando sorteios desde: {DATA_INICIO_BOLAO.strftime('%d/%m/%Y')}")
 
     if not st.session_state.participantes:
-        st.info("Aguardando cadastro de participantes pelo Organizador.")
+        st.info(
+            "Nenhum participante encontrado. O arquivo 'bolao_atual.xlsx' não foi lido ou está vazio.")
     else:
         dados = []
         for p in st.session_state.participantes:
@@ -68,7 +100,7 @@ if aba == "📊 Ranking":
             })
 
         df = pd.DataFrame(dados).sort_values(by="Acertos", ascending=False)
-        st.table(df)  # Table é melhor para ver no celular
+        st.table(df)
 
         # Lógica de Vitória
         vencedores = df[df["Acertos"] >= 10]
@@ -96,6 +128,8 @@ elif aba == "💰 Financeiro":
 # --- ABA: CONCURSOS ---
 elif aba == "📅 Concursos":
     st.header("Sorteios Válidos")
+    if erro_api:
+        st.warning("A lista de concursos não pôde ser atualizada neste momento.")
     for c in lista_concursos:
         st.write(c)
 
@@ -107,25 +141,35 @@ elif aba == "⚙️ Organizador":
     if senha == SENHA_ADMIN:
         st.success("Acesso Liberado")
 
-        st.subheader("Subir Excel (.xlsx)")
+        st.subheader("Subir Excel (.xlsx) Manualmente")
         st.caption(
-            "A planilha deve ter as colunas 'Nome' e 'Numeros' (separados por vírgula)")
+            "Use apenas se quiser sobrescrever a planilha oficial temporariamente.")
         arq = st.file_uploader("Arquivo Excel", type="xlsx")
         if arq:
             if st.button("Processar Excel"):
+                st.session_state.participantes = []  # Limpa antes de carregar o novo
                 df_ex = pd.read_excel(arq)
                 for _, row in df_ex.iterrows():
                     try:
                         n = str(row['Nome'])
-                        nums = [int(i) for i in str(row['Numeros']).split(',')]
+                        nums = [int(i.strip())
+                                for i in str(row['Numeros']).split(',')]
                         st.session_state.participantes.append(
                             {"nome": n, "numeros": nums})
                     except:
                         continue
                 st.rerun()
 
-        if st.button("❌ LIMPAR TODOS OS DADOS (Nova Rodada)"):
-            st.session_state.participantes = []
-            st.rerun()
+        st.divider()
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("🔄 Recarregar Planilha Oficial"):
+                st.session_state.participantes = carregar_planilha_local()
+                st.rerun()
+        with col_btn2:
+            if st.button("❌ LIMPAR TODOS OS DADOS"):
+                st.session_state.participantes = []
+                st.rerun()
+
     elif senha != "":
         st.error("Senha Incorreta")
