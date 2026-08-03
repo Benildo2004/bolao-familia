@@ -1,0 +1,6 @@
+Ini, TOML
+[client]
+showSidebarNavigation = true
+
+[ui]
+hideTopBar = true
