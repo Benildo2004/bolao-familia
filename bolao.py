@@ -41,49 +41,58 @@ def ler_excel_local():
             st.error(f"Erro ao ler a planilha Excel: {e}")
     return None
 
-# --- BUSCA DE RESULTADOS (COM DUPLA API + SUPORTE MANUAL) ---
+# --- BUSCA DE RESULTADOS ROBUSTA ---
 
 
 @st.cache_data(ttl=3600)
 def buscar_resultados_lotofacil():
-    # API Primária (Loterias API)
-    url_primaria = "https://loteriasapi.com/api/v2/lotofacil"
+    concursos = {}
+
+    # Tentativa 1: API Loterias API (Lógica ajustada)
     try:
-        response = requests.get(url_primaria, timeout=5)
+        response = requests.get(
+            "https://loteriasapi.com/api/v2/lotofacil", timeout=5)
         if response.status_code == 200:
             dados = response.json()
-            if isinstance(dados, list) and len(dados) > 0:
-                concursos = {}
-                for c in dados[:10]:  # Pega os últimos 10
-                    num = str(c.get("conquarso") or c.get("concurso"))
-                    dezenas = c.get("dezenas") or c.get("dezenasSorteadas")
-                    data = c.get("data")
-                    if num and dezenas:
-                        concursos[num] = {"data": data, "dezenas": [
-                            str(d).zfill(2) for d in dezenas]}
-                if concursos:
-                    return concursos
+            # Pode vir como lista ou como um único dicionário
+            if isinstance(dados, list):
+                lista_itens = dados
+            else:
+                lista_itens = [dados]
+
+            for c in lista_itens:
+                num = str(c.get("concurso") or c.get("numero") or "")
+                dezenas = c.get("dezenas") or c.get(
+                    "dezenasSorteadas") or c.get("listaDezenas")
+                data = c.get("data")
+                if num and dezenas:
+                    concursos[num] = {"data": data, "dezenas": [
+                        str(d).zfill(2) for d in dezenas]}
     except:
         pass
 
-    # API Secundária (Alternativa)
-    url_secundaria = "https://brasilapi.com.br/api/loterias/v1/lotofacil"
+    # Se já encontrou na primária, retorna
+    if concursos:
+        return concursos
+
+    # Tentativa 2: BrasilAPI como fallback
     try:
-        response = requests.get(url_secundaria, timeout=5)
+        response = requests.get(
+            "https://brasilapi.com.br/api/loterias/v1/lotofacil", timeout=5)
         if response.status_code == 200:
             dados = response.json()
-            num = str(dados.get("concurso"))
+            num = str(dados.get("concurso", ""))
             dezenas = [str(d).zfill(2) for d in dados.get("dezenas", [])]
-            data = dados.get("data")
+            data = dados.get("data", "")
             if num and dezenas:
-                return {num: {"data": data, "dezenas": dezenas}}
+                concursos[num] = {"data": data, "dezenas": dezenas}
     except:
         pass
 
-    return {}
+    return concursos
 
 
-# Inicializa dados salvos no JSON com segurança
+# Inicializa dados salvos com segurança
 dados_app = carregar_dados()
 if "concursos_manuais" not in dados_app:
     dados_app["concursos_manuais"] = {}
@@ -95,10 +104,8 @@ st.title("⚽ Bolão da Família")
 menu = ["🏆 Ranking & Resultados", "👥 Participantes", "⚙️ Organizador"]
 escolha = st.sidebar.selectbox("Navegação", menu)
 
-# Carrega os resultados da API
+# Carrega os resultados da API e junta com os manuais do organizador
 resultados_api = buscar_resultados_lotofacil()
-
-# Junta os resultados da API com os lançamentos manuais do organizador
 concursos_oficiais = {**resultados_api, **
                       dados_app.get("concursos_manuais", {})}
 
@@ -106,22 +113,22 @@ if escolha == "🏆 Ranking & Resultados":
     st.subheader("📊 Sorteios Válidos Registrados")
 
     if concursos_oficiais:
-        concursos_ordenados = sorted(
-            concursos_oficiais.keys(), key=lambda x: int(x), reverse=True)
+        concursos_ordenados = sorted(concursos_oficiais.keys(
+        ), key=lambda x: int(x) if x.isdigit() else 0, reverse=True)
 
         for num in concursos_ordenados[:5]:
             info = concursos_oficiais[num]
             data_str = f" ({info.get('data', '')})" if info.get('data') else ""
             st.write(f"**Concurso {num}{data_str}**: `{info['dezenas']}`")
     else:
-        st.info("Nenhum concurso carregado no momento. Verifique a conexão ou utilize o Organizador para lançamento manual.")
+        st.warning(
+            "Nenhum concurso carregado no momento. Você pode cadastrar manualmente na aba Organizador.")
 
     st.divider()
     st.subheader("🥇 Ranking Atual")
 
     df_excel = ler_excel_local()
     if df_excel is not None:
-        st.write("Planilha carregada com sucesso do seu projeto!")
         st.dataframe(df_excel)
     else:
         st.warning(
@@ -145,8 +152,7 @@ elif escolha == "⚙️ Organizador":
         st.divider()
 
         st.markdown("### ✍️ Lançamento Manual de Concurso")
-        st.info(
-            "Caso a API demore para atualizar, você pode cadastrar o concurso manualmente aqui.")
+        st.info("Caso a API demore para atualizar (como o concurso 3040), cadastre manualmente aqui para o ranking funcionar na hora.")
 
         with st.form("form_manual"):
             novo_concurso = st.text_input("Número do Concurso (ex: 3040)")
