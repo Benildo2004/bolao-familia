@@ -48,18 +48,13 @@ def ler_excel_local():
 def buscar_resultados_lotofacil():
     concursos = {}
 
-    # Tentativa 1: API Loterias API (Lógica ajustada)
+    # Tentativa 1: API Loterias API
     try:
         response = requests.get(
             "https://loteriasapi.com/api/v2/lotofacil", timeout=5)
         if response.status_code == 200:
             dados = response.json()
-            # Pode vir como lista ou como um único dicionário
-            if isinstance(dados, list):
-                lista_itens = dados
-            else:
-                lista_itens = [dados]
-
+            lista_itens = dados if isinstance(dados, list) else [dados]
             for c in lista_itens:
                 num = str(c.get("concurso") or c.get("numero") or "")
                 dezenas = c.get("dezenas") or c.get(
@@ -71,11 +66,10 @@ def buscar_resultados_lotofacil():
     except:
         pass
 
-    # Se já encontrou na primária, retorna
     if concursos:
         return concursos
 
-    # Tentativa 2: BrasilAPI como fallback
+    # Tentativa 2: BrasilAPI
     try:
         response = requests.get(
             "https://brasilapi.com.br/api/loterias/v1/lotofacil", timeout=5)
@@ -101,46 +95,46 @@ if "concursos_manuais" not in dados_app:
 # --- INTERFACE DO APLICATIVO ---
 st.title("⚽ Bolão da Família")
 
-menu = ["🏆 Ranking & Resultados", "👥 Participantes", "⚙️ Organizador"]
+# Menu original restaurado exatamente como você definiu
+menu = ["🏆 Ranking & Resultados", "🎲 Concursos",
+        "💰 Financeiro", "⚙️ Organizador"]
 escolha = st.sidebar.selectbox("Navegação", menu)
 
-# Carrega os resultados da API e junta com os manuais do organizador
+# Carrega os resultados e junta com os manuais do organizador
 resultados_api = buscar_resultados_lotofacil()
 concursos_oficiais = {**resultados_api, **
                       dados_app.get("concursos_manuais", {})}
 
 if escolha == "🏆 Ranking & Resultados":
-    st.subheader("📊 Sorteios Válidos Registrados")
+    st.subheader("🥇 Ranking Atual")
+    df_excel = ler_excel_local()
+    if df_excel is not None:
+        st.dataframe(df_excel)
+    else:
+        st.warning(
+            "O arquivo `bolao_atual.xlsx` ainda não foi encontrado na pasta do projeto. Use o Organizador para enviá-lo.")
 
+elif escolha == "🎲 Concursos":
+    st.subheader("📊 Sorteios Válidos Registrados")
     if concursos_oficiais:
         concursos_ordenados = sorted(concursos_oficiais.keys(
         ), key=lambda x: int(x) if x.isdigit() else 0, reverse=True)
-
-        for num in concursos_ordenados[:5]:
+        for num in concursos_ordenados[:10]:
             info = concursos_oficiais[num]
             data_str = f" ({info.get('data', '')})" if info.get('data') else ""
             st.write(f"**Concurso {num}{data_str}**: `{info['dezenas']}`")
     else:
-        st.warning(
-            "Nenhum concurso carregado no momento. Você pode cadastrar manualmente na aba Organizador.")
+        st.info("Nenhum concurso carregado no momento. Utilize o Organizador para lançamento manual se necessário.")
 
-    st.divider()
-    st.subheader("🥇 Ranking Atual")
-
+elif escolha == "💰 Financeiro":
+    st.subheader("💰 Controle Financeiro do Bolão")
+    st.info("Informações financeiras e de pagamentos dos participantes.")
     df_excel = ler_excel_local()
     if df_excel is not None:
+        # Exibe colunas relevantes se existirem na planilha
         st.dataframe(df_excel)
     else:
-        st.warning(
-            "O arquivo `bolao_atual.xlsx` ainda não foi encontrado na pasta do projeto.")
-
-elif escolha == "👥 Participantes":
-    st.subheader("👥 Lista de Participantes e Apostas")
-    df_excel = ler_excel_local()
-    if df_excel is not None:
-        st.dataframe(df_excel)
-    else:
-        st.warning("Nenhum dado de participantes carregado no Excel.")
+        st.warning("Nenhum dado financeiro carregado no Excel.")
 
 elif escolha == "⚙️ Organizador":
     st.subheader("⚙️ Painel do Organizador")
@@ -151,8 +145,22 @@ elif escolha == "⚙️ Organizador":
         st.success("Acesso autorizado!")
         st.divider()
 
+        # 1. Restauração do Upload da Planilha
+        st.markdown("### 📁 Atualizar Planilha do Bolão (Excel)")
+        st.info("Faça o upload da sua planilha atualizada (`bolao_atual.xlsx`) para atualizar o app instantaneamente.")
+        uploaded_file = st.file_uploader(
+            "Escolha o arquivo Excel", type=["xlsx", "xls"])
+
+        if uploaded_file is not None:
+            with open(PLANILHA_EXCEL, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            st.success("Planilha atualizada com sucesso! Recarregue a página.")
+
+        st.divider()
+
+        # 2. Lançamento Manual de Concurso
         st.markdown("### ✍️ Lançamento Manual de Concurso")
-        st.info("Caso a API demore para atualizar (como o concurso 3040), cadastre manualmente aqui para o ranking funcionar na hora.")
+        st.info("Caso a API da Caixa demore para atualizar (como o concurso 3040), cadastre manualmente aqui para o ranking funcionar na hora.")
 
         with st.form("form_manual"):
             novo_concurso = st.text_input("Número do Concurso (ex: 3040)")
