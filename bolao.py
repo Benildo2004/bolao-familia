@@ -17,8 +17,13 @@ st.set_page_config(page_title="Bolão da Família",
 
 def carregar_dados():
     if os.path.exists(ARQUIVO_DADOS):
-        with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+                if isinstance(dados, dict):
+                    return dados
+        except:
+            pass
     return {}
 
 
@@ -78,7 +83,7 @@ def buscar_resultados_lotofacil():
     return {}
 
 
-# Inicializa dados salvos no JSON se não existirem
+# Inicializa dados salvos no JSON com segurança
 dados_app = carregar_dados()
 if "concursos_manuais" not in dados_app:
     dados_app["concursos_manuais"] = {}
@@ -94,13 +99,13 @@ escolha = st.sidebar.selectbox("Navegação", menu)
 resultados_api = buscar_resultados_lotofacil()
 
 # Junta os resultados da API com os lançamentos manuais do organizador
-concursos_oficiais = {**resultados_api, **dados_app["concursos_manuais"]}
+concursos_oficiais = {**resultados_api, **
+                      dados_app.get("concursos_manuais", {})}
 
 if escolha == "🏆 Ranking & Resultados":
     st.subheader("📊 Sorteios Válidos Registrados")
 
     if concursos_oficiais:
-        # Ordena do mais recente para o mais antigo
         concursos_ordenados = sorted(
             concursos_oficiais.keys(), key=lambda x: int(x), reverse=True)
 
@@ -114,7 +119,6 @@ if escolha == "🏆 Ranking & Resultados":
     st.divider()
     st.subheader("🥇 Ranking Atual")
 
-    # Lê a planilha Excel enviada
     df_excel = ler_excel_local()
     if df_excel is not None:
         st.write("Planilha carregada com sucesso do seu projeto!")
@@ -141,12 +145,12 @@ elif escolha == "⚙️ Organizador":
         st.divider()
 
         st.markdown("### ✍️ Lançamento Manual de Concurso")
-        st.info("Caso a API demore para atualizar, você pode cadastrar o concurso manualmente aqui. Ele terá prioridade e nunca será duplicado.")
+        st.info(
+            "Caso a API demore para atualizar, você pode cadastrar o concurso manualmente aqui.")
 
         with st.form("form_manual"):
             novo_concurso = st.text_input("Número do Concurso (ex: 3040)")
             data_concurso = st.text_input("Data do Sorteio (ex: 04/08/2026)")
-            # Campo para os 15 números da lotofácil ou os números do bolão
             dezenas_str = st.text_input(
                 "Dezenas sorteadas separadas por vírgula (ex: 01, 03, 05, ...)")
 
@@ -154,11 +158,9 @@ elif escolha == "⚙️ Organizador":
 
             if botao_salvar:
                 if novo_concurso and dezenas_str:
-                    # Limpa e formata as dezenas digitadas
                     lista_dezenas = [d.strip().zfill(2)
                                      for d in dezenas_str.split(",")]
 
-                    # Salva no JSON de manuais
                     dados_atuais = carregar_dados()
                     if "concursos_manuais" not in dados_atuais:
                         dados_atuais["concursos_manuais"] = {}
