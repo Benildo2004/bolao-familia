@@ -1,175 +1,182 @@
+import json
+import os
+import requests
 import streamlit as st
 import pandas as pd
-import requests
-from datetime import datetime
-import os
 
-# --- CONFIGURAÇÃO MANUAL (Altere aqui para cada nova rodada) ---
-DATA_INICIO_BOLAO = datetime(2026, 7, 26)
-SENHA_ADMIN = "familia123"  # Altere sua senha aqui
+# Nome dos arquivos locais
+ARQUIVO_DADOS = "participantes.json"
+PLANILHA_EXCEL = "bolao_atual.xlsx"
+SENHA_ADMIN = "familia123"
 
-# --- CONFIGURAÇÃO DE PREÇOS ---
-VALOR_COTA = 50.0
-PERC_GANHADOR = 0.60
-PERC_LANTERNA = 0.25
+st.set_page_config(page_title="Bolão da Família",
+                   page_icon="⚽", layout="centered")
 
-# --- FUNÇÃO DE BUSCA NA API ---
+# --- FUNÇÕES DE DADOS ---
+
+
+def carregar_dados():
+    if os.path.exists(ARQUIVO_DADOS):
+        with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def salvar_dados(dados):
+    with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=4)
+
+
+def ler_excel_local():
+    if os.path.exists(PLANILHA_EXCEL):
+        try:
+            df = pd.read_excel(PLANILHA_EXCEL)
+            return df
+        except Exception as e:
+            st.error(f"Erro ao ler a planilha Excel: {e}")
+    return None
+
+# --- BUSCA DE RESULTADOS (COM DUPLA API + SUPORTE MANUAL) ---
 
 
 @st.cache_data(ttl=3600)
-def buscar_resultados():
+def buscar_resultados_lotofacil():
+    # API Primária (Loterias API)
+    url_primaria = "https://loteriasapi.com/api/v2/lotofacil"
     try:
-        url = "https://loteriascaixa-api.herokuapp.com/api/megasena"
-        # timeout adicionado para não travar o app se a Caixa estiver lenta
-        res = requests.get(url, timeout=10).json()
+        response = requests.get(url_primaria, timeout=5)
+        if response.status_code == 200:
+            dados = response.json()
+            if isinstance(dados, list) and len(dados) > 0:
+                concursos = {}
+                for c in dados[:10]:  # Pega os últimos 10
+                    num = str(c.get("conquarso") or c.get("concurso"))
+                    dezenas = c.get("dezenas") or c.get("dezenasSorteadas")
+                    data = c.get("data")
+                    if num and dezenas:
+                        concursos[num] = {"data": data, "dezenas": [
+                            str(d).zfill(2) for d in dezenas]}
+                if concursos:
+                    return concursos
+    except:
+        pass
 
-        sorteados = set()
-        detalhes = []
-        for s in res:
-            data_s = datetime.strptime(s['data'], "%d/%m/%Y")
-            if data_s >= DATA_INICIO_BOLAO:
-                dezenas = [int(n) for n in s['dezenas']]
-                sorteados.update(dezenas)
-                detalhes.append(
-                    f"Concurso {s['concurso']} ({s['data']}): {s['dezenas']}")
-        return sorteados, detalhes, False  # False indica que NÃO houve erro
-    except Exception:
-        return set(), [], True  # True indica que houve erro na conexão
+    # API Secundária (Alternativa)
+    url_secundaria = "https://brasilapi.com.br/api/loterias/v1/lotofacil"
+    try:
+        response = requests.get(url_secundaria, timeout=5)
+        if response.status_code == 200:
+            dados = response.json()
+            num = str(dados.get("concurso"))
+            dezenas = [str(d).zfill(2) for d in dados.get("dezenas", [])]
+            data = dados.get("data")
+            if num and dezenas:
+                return {num: {"data": data, "dezenas": dezenas}}
+    except:
+        pass
 
-# --- FUNÇÃO PARA CARREGAR EXCEL AUTOMATICAMENTE ---
-
-
-def carregar_planilha_local():
-    lista_temp = []
-    # Verifica se o arquivo existe no repositório do GitHub
-    if os.path.exists("bolao_atual.xlsx"):
-        try:
-            df_ex = pd.read_excel("bolao_atual.xlsx")
-            for _, row in df_ex.iterrows():
-                try:
-                    n = str(row['Nome'])
-                    # O .strip() limpa espaços antes e depois do número
-                    nums = [int(i.strip())
-                            for i in str(row['Numeros']).split(',')]
-                    lista_temp.append({"nome": n, "numeros": nums})
-                except:
-                    continue
-        except Exception:
-            pass
-    return lista_temp
+    return {}
 
 
-# --- INICIALIZAÇÃO ---
-st.set_page_config(page_title="Bolão Família", layout="wide")
+# Inicializa dados salvos no JSON se não existirem
+dados_app = carregar_dados()
+if "concursos_manuais" not in dados_app:
+    dados_app["concursos_manuais"] = {}
+    salvar_dados(dados_app)
 
-# Carrega os dados automaticamente se a lista de participantes estiver vazia
-if 'participantes' not in st.session_state or not st.session_state.participantes:
-    st.session_state.participantes = carregar_planilha_local()
+# --- INTERFACE DO APLICATIVO ---
+st.title("⚽ Bolão da Família")
 
-sorteados, lista_concursos, erro_api = buscar_resultados()
+menu = ["🏆 Ranking & Resultados", "👥 Participantes", "⚙️ Organizador"]
+escolha = st.sidebar.selectbox("Navegação", menu)
 
-# --- SIDEBAR ---
-st.sidebar.title("🎲 Menu")
-aba = st.sidebar.radio(
-    "Navegar:", ["📊 Ranking", "💰 Financeiro", "📅 Concursos", "⚙️ Organizador"])
+# Carrega os resultados da API
+resultados_api = buscar_resultados_lotofacil()
 
-# Aviso visual na barra lateral caso a API falhe
-if erro_api:
-    st.sidebar.error(
-        "⚠️ Erro de conexão com a loteria. Resultados podem estar desatualizados.")
+# Junta os resultados da API com os lançamentos manuais do organizador
+concursos_oficiais = {**resultados_api, **dados_app["concursos_manuais"]}
 
-# --- ABA: RANKING ---
-if aba == "📊 Ranking":
-    st.header(f"🏆 Classificação Atual")
-    st.caption(
-        f"Contando sorteios desde: {DATA_INICIO_BOLAO.strftime('%d/%m/%Y')}")
+if escolha == "🏆 Ranking & Resultados":
+    st.subheader("📊 Sorteios Válidos Registrados")
 
-    if not st.session_state.participantes:
-        st.info(
-            "Nenhum participante encontrado. O arquivo 'bolao_atual.xlsx' não foi lido ou está vazio.")
+    if concursos_oficiais:
+        # Ordena do mais recente para o mais antigo
+        concursos_ordenados = sorted(
+            concursos_oficiais.keys(), key=lambda x: int(x), reverse=True)
+
+        for num in concursos_ordenados[:5]:
+            info = concursos_oficiais[num]
+            data_str = f" ({info.get('data', '')})" if info.get('data') else ""
+            st.write(f"**Concurso {num}{data_str}**: `{info['dezenas']}`")
     else:
-        dados = []
-        for p in st.session_state.participantes:
-            acertos = [n for n in p['numeros'] if n in sorteados]
-            dados.append({
-                "Nome": p['nome'],
-                "Acertos": len(acertos),
-                "Faltam": 10 - len(acertos),
-                "Números Escolhidos": sorted(p['numeros']),
-                "Números Sorteados": sorted(acertos)
-            })
+        st.info("Nenhum concurso carregado no momento. Verifique a conexão ou utilize o Organizador para lançamento manual.")
 
-        df = pd.DataFrame(dados).sort_values(by="Acertos", ascending=False)
-        st.table(df)
+    st.divider()
+    st.subheader("🥇 Ranking Atual")
 
-        # Lógica de Vitória
-        vencedores = df[df["Acertos"] >= 10]
-        if not vencedores.empty:
-            st.balloons()
-            st.success(
-                f"🏁 RODADA ENCERRADA! Ganhador(es): {', '.join(vencedores['Nome'].tolist())}")
-            min_p = df["Acertos"].min()
-            lanternas = df[df["Acertos"] == min_p]["Nome"].tolist()
-            st.warning(
-                f"🐢 Lanterna(s) (25% do prêmio): {', '.join(lanternas)} com {min_p} acertos.")
+    # Lê a planilha Excel enviada
+    df_excel = ler_excel_local()
+    if df_excel is not None:
+        st.write("Planilha carregada com sucesso do seu projeto!")
+        st.dataframe(df_excel)
+    else:
+        st.warning(
+            "O arquivo `bolao_atual.xlsx` ainda não foi encontrado na pasta do projeto.")
 
-# --- ABA: FINANCEIRO ---
-elif aba == "💰 Financeiro":
-    st.header("💰 Resumo Financeiro")
-    total_p = len(st.session_state.participantes)
-    arrecadado = total_p * VALOR_COTA
-    st.metric("Total de Participantes", total_p)
-    col1, col2 = st.columns(2)
-    col1.metric("Prêmio 1º Lugar (60%)",
-                f"R$ {arrecadado * PERC_GANHADOR:.2f}")
-    col2.metric("Prêmio Lanterna (25%)",
-                f"R$ {arrecadado * PERC_LANTERNA:.2f}")
+elif escolha == "👥 Participantes":
+    st.subheader("👥 Lista de Participantes e Apostas")
+    df_excel = ler_excel_local()
+    if df_excel is not None:
+        st.dataframe(df_excel)
+    else:
+        st.warning("Nenhum dado de participantes carregado no Excel.")
 
-# --- ABA: CONCURSOS ---
-elif aba == "📅 Concursos":
-    st.header("Sorteios Válidos")
-    if erro_api:
-        st.warning("A lista de concursos não pôde ser atualizada neste momento.")
-    for c in lista_concursos:
-        st.write(c)
+elif escolha == "⚙️ Organizador":
+    st.subheader("⚙️ Painel do Organizador")
+    senha_digitada = st.text_input(
+        "Digite a senha de administrador:", type="password")
 
-# --- ABA: ORGANIZADOR (SENHA) ---
-elif aba == "⚙️ Organizador":
-    st.header("Área Restrita")
-    senha = st.text_input("Digite a senha para gerenciar", type="password")
+    if senha_digitada == SENHA_ADMIN:
+        st.success("Acesso autorizado!")
+        st.divider()
 
-    if senha == SENHA_ADMIN:
-        st.success("Acesso Liberado")
+        st.markdown("### ✍️ Lançamento Manual de Concurso")
+        st.info("Caso a API demore para atualizar, você pode cadastrar o concurso manualmente aqui. Ele terá prioridade e nunca será duplicado.")
 
-        st.subheader("Subir Excel (.xlsx) Manualmente")
-        st.caption(
-            "Use apenas se quiser sobrescrever a planilha oficial temporariamente.")
-        arq = st.file_uploader("Arquivo Excel", type="xlsx")
-        if arq:
-            if st.button("Processar Excel"):
-                st.session_state.participantes = []  # Limpa antes de carregar o novo
-                df_ex = pd.read_excel(arq)
-                for _, row in df_ex.iterrows():
-                    try:
-                        n = str(row['Nome'])
-                        nums = [int(i.strip())
-                                for i in str(row['Numeros']).split(',')]
-                        st.session_state.participantes.append(
-                            {"nome": n, "numeros": nums})
-                    except:
-                        continue
-                st.rerun()
+        with st.form("form_manual"):
+            novo_concurso = st.text_input("Número do Concurso (ex: 3040)")
+            data_concurso = st.text_input("Data do Sorteio (ex: 04/08/2026)")
+            # Campo para os 15 números da lotofácil ou os números do bolão
+            dezenas_str = st.text_input(
+                "Dezenas sorteadas separadas por vírgula (ex: 01, 03, 05, ...)")
+
+            botao_salvar = st.form_submit_button("Salvar Concurso Manualmente")
+
+            if botao_salvar:
+                if novo_concurso and dezenas_str:
+                    # Limpa e formata as dezenas digitadas
+                    lista_dezenas = [d.strip().zfill(2)
+                                     for d in dezenas_str.split(",")]
+
+                    # Salva no JSON de manuais
+                    dados_atuais = carregar_dados()
+                    if "concursos_manuais" not in dados_atuais:
+                        dados_atuais["concursos_manuais"] = {}
+
+                    dados_atuais["concursos_manuais"][str(novo_concurso)] = {
+                        "data": data_concurso,
+                        "dezenas": lista_dezenas
+                    }
+                    salvar_dados(dados_atuais)
+                    st.success(
+                        f"Concurso {novo_concurso} salvo com sucesso! Atualize a página.")
+                else:
+                    st.error("Preencha o número do concurso e as dezenas.")
 
         st.divider()
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            if st.button("🔄 Recarregar Planilha Oficial"):
-                st.session_state.participantes = carregar_planilha_local()
-                st.rerun()
-        with col_btn2:
-            if st.button("❌ LIMPAR TODOS OS DADOS"):
-                st.session_state.participantes = []
-                st.rerun()
+        if st.button("🔄 Forçar Limpeza de Cache de Concursos"):
+            st.cache_data.clear()
+            st.success("Cache limpo! Recarregue a página.")
 
-    elif senha != "":
-        st.error("Senha Incorreta")
+    elif senha_digitada != "":
+        st.error("Senha incorreta.")
