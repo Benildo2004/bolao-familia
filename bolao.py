@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime
+import os
 
 # --- CONFIGURAÇÃO MANUAL (Altere aqui para cada nova rodada) ---
 DATA_INICIO_BOLAO = datetime(2026, 7, 26)
@@ -37,15 +38,30 @@ def buscar_resultados():
 
 # --- INICIALIZAÇÃO ---
 st.set_page_config(page_title="Bolão Família", layout="wide")
+
 if 'participantes' not in st.session_state:
     st.session_state.participantes = []
-# NOVA LINHA: Inicializa os concursos manuais
+    # NOVA LÓGICA: Carrega a planilha automaticamente se ela existir no repositório
+    if os.path.exists("bolao_atual.xlsx"):
+        try:
+            df_ex = pd.read_excel("bolao_atual.xlsx")
+            for _, row in df_ex.iterrows():
+                try:
+                    n = str(row['Nome'])
+                    nums = [int(i) for i in str(row['Numeros']).split(',')]
+                    st.session_state.participantes.append(
+                        {"nome": n, "numeros": nums})
+                except:
+                    continue
+        except:
+            pass
+
 if 'concursos_manuais' not in st.session_state:
     st.session_state.concursos_manuais = []
 
 sorteados, lista_concursos = buscar_resultados()
 
-# NOVA LINHA: Junta os sorteios da API com os manuais que você inserir
+# Junta os sorteios da API com os manuais que você inserir
 for manual in st.session_state.concursos_manuais:
     lista_concursos.append(
         f"Concurso {manual['concurso']} (Manual): {manual['dezenas']}")
