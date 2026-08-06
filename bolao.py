@@ -39,8 +39,17 @@ def buscar_resultados():
 st.set_page_config(page_title="Bolão Família", layout="wide")
 if 'participantes' not in st.session_state:
     st.session_state.participantes = []
+# NOVA LINHA: Inicializa os concursos manuais
+if 'concursos_manuais' not in st.session_state:
+    st.session_state.concursos_manuais = []
 
 sorteados, lista_concursos = buscar_resultados()
+
+# NOVA LINHA: Junta os sorteios da API com os manuais que você inserir
+for manual in st.session_state.concursos_manuais:
+    lista_concursos.append(
+        f"Concurso {manual['concurso']} (Manual): {manual['dezenas']}")
+    sorteados.update(manual['dezenas'])
 
 # --- SIDEBAR ---
 st.sidebar.title("🎲 Menu")
@@ -124,8 +133,32 @@ elif aba == "⚙️ Organizador":
                         continue
                 st.rerun()
 
+        # NOVA SEÇÃO: Formulário para concurso manual
+        st.subheader("✍️ Adicionar Sorteio Manual")
+        with st.form("form_manual"):
+            concurso_num = st.text_input("Número do Concurso (Ex: 3040)")
+            dezenas_in = st.text_input(
+                "Dezenas sorteadas (separadas por vírgula. Ex: 10, 15, 23, ...)")
+
+            if st.form_submit_button("Salvar Sorteio Manual"):
+                try:
+                    dezenas_lista = [int(x.strip())
+                                     for x in dezenas_in.split(',')]
+                    st.session_state.concursos_manuais.append({
+                        "concurso": concurso_num,
+                        "dezenas": dezenas_lista
+                    })
+                    st.success(
+                        f"Concurso {concurso_num} adicionado com sucesso! Atualizando...")
+                    st.rerun()
+                except:
+                    st.error(
+                        "Erro ao ler as dezenas. Certifique-se de usar apenas números separados por vírgula.")
+
+        st.divider()
         if st.button("❌ LIMPAR TODOS OS DADOS (Nova Rodada)"):
             st.session_state.participantes = []
+            st.session_state.concursos_manuais = []
             st.rerun()
     elif senha != "":
         st.error("Senha Incorreta")
