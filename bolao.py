@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 
 # --- CONFIGURAÇÃO MANUAL (Altere aqui para cada nova rodada) ---
-DATA_INICIO_BOLAO = datetime(2026, 7, 26)
+DATA_INICIO_BOLAO = datetime(2026, 9, 6)
 SENHA_ADMIN = "familia123"  # Altere sua senha aqui
 
 # --- CONFIGURAÇÃO DE PREÇOS ---
