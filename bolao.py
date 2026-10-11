@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 
 # --- CONFIGURAÇÃO MANUAL (Altere aqui para cada nova rodada) ---
-DATA_INICIO_BOLAO = datetime(2026, 9, 6)
+DATA_INICIO_BOLAO = datetime(2026, 10, 11)
 SENHA_ADMIN = "familia123"  # Altere sua senha aqui
 
 # --- CONFIGURAÇÃO DE PREÇOS ---
@@ -139,6 +139,7 @@ elif aba == "⚙️ Organizador":
         if arq:
             if st.button("Processar Excel"):
                 df_ex = pd.read_excel(arq)
+                st.session_state.participantes = []  # Limpa a memória atual
                 for _, row in df_ex.iterrows():
                     try:
                         n = str(row['Nome'])
@@ -147,7 +148,9 @@ elif aba == "⚙️ Organizador":
                             {"nome": n, "numeros": nums})
                     except:
                         continue
-                st.rerun()
+                # Removemos o st.rerun() para que a mensagem de sucesso fique visível na tela
+                st.success(
+                    "✅ Planilha processada com sucesso! Vá na aba 'Ranking' para conferir.")
 
         # NOVA SEÇÃO: Formulário para concurso manual
         st.subheader("✍️ Adicionar Sorteio Manual")
@@ -165,16 +168,18 @@ elif aba == "⚙️ Organizador":
                         "dezenas": dezenas_lista
                     })
                     st.success(
-                        f"Concurso {concurso_num} adicionado com sucesso! Atualizando...")
-                    st.rerun()
+                        f"✅ Concurso {concurso_num} adicionado com sucesso! Vá na aba 'Ranking' para ver a atualização.")
                 except:
                     st.error(
                         "Erro ao ler as dezenas. Certifique-se de usar apenas números separados por vírgula.")
 
         st.divider()
-        if st.button("❌ LIMPAR TODOS OS DADOS (Nova Rodada)"):
-            st.session_state.participantes = []
-            st.session_state.concursos_manuais = []
+        if st.button("❌ LIMPAR TODOS OS DADOS (Forçar leitura do GitHub)"):
+            # O "del" exclui os dados por completo da memória, ativando a rotina de auto-leitura do arquivo atualizado
+            if 'participantes' in st.session_state:
+                del st.session_state['participantes']
+            if 'concursos_manuais' in st.session_state:
+                del st.session_state['concursos_manuais']
             st.rerun()
     elif senha != "":
         st.error("Senha Incorreta")
